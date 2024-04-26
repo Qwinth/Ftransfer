@@ -1,9 +1,8 @@
 #include <map>
 #include <vector>
 #include <string>
-#include <poll.h>
-#include "../cpplibs/ssocket.hpp"
-#include "../cpplibs/libjson.hpp"
+#include "cpplibs/ssocket.hpp"
+#include "cpplibs/libjson.hpp"
 using namespace std;
 
 struct client_t {
@@ -28,16 +27,16 @@ int vecFind(Socket sock) {
 }
 
 int handler(Socket sock) {
-    sockrecv_t cmd = sock.recv(8192); 
+    sockrecv_t cmd = sock.recv(8192);
 
-    if (!cmd.size) return 0;
+    if (!cmd.size || cmd.string == "close_connection") return 0;
 
     JsonNode node = json.parse(cmd.string);
 
     if (node["cmd"].str == "cl_list") {
         JsonNode node1;
         JsonNode node2;
-        
+
 
         for (auto i : clients) if (i.second != sock) node2.arrayAppend(i.second.remoteAddress().str());
 
@@ -111,12 +110,15 @@ int main() {
     sock.listen(0);
 
     vector<pollfd> fds;
-    fds.push_back({sock.fd(), POLLIN, 0});
+    fds.push_back({ (SOCKET)sock.fd(), POLLIN, 0 });
 
     while (true) {
+        cout << "here" << endl;
         if (poll(fds.data(), fds.size(), -1)) {
+            cout << "here2" << endl;
             if (fds[0].revents & POLLIN) {
                 auto tmp = sock.accept();
+                cout << "new client: " << tmp.second.str() << endl;
 
                 JsonNode node;
                 node.addPair("cmd", "client_connected");
@@ -124,15 +126,19 @@ int main() {
 
                 for (auto i : clients) i.second.send(json.dump(node));
 
-                fds.push_back({tmp.first.fd(), POLLIN, 0});
+                fds.push_back({ (SOCKET)tmp.first.fd(), POLLIN, 0 });
                 clients[tmp.first.fd()] = tmp.first;
+
+                fds[0].revents = 0;
             }
 
             else for (int i = 1; i < fds.size(); i++) {
                 Socket client = clients[fds[i].fd];
 
-                if (fds[i].revents & POLLIN) {                    
+                if (fds[i].revents & POLLIN) {
                     if (!handler(client)) {
+                        cout << "client close: " << client.remoteAddress().str() << endl;
+
                         clients.erase(fds[i].fd);
                         fds.erase(fds.begin() + i--);
 
@@ -143,17 +149,37 @@ int main() {
                         for (auto i : clients) i.second.send(json.dump(node));
 
                         for (auto [sender, receiver] : sockpipes)
+                            if (client.remoteAddress().str() == sender || client.remoteAddress().str() == receiver) {
+                                sockpipes.erase(sender);
+                                cout << "Closed pipe: " << sender << " >> " << receiver << endl;
+                                break;
+                            }
+
+                        client.close();
+                    }
+                }
+
+                else if (fds[i].revents & POLLHUP) {
+                    clients.erase(fds[i].fd);
+                    fds.erase(fds.begin() + i--);
+
+                    JsonNode node;
+                    node.addPair("cmd", "client_disconnected");
+                    node.addPair("address", client.remoteAddress().str());
+
+                    for (auto i : clients) i.second.send(json.dump(node));
+
+                    for (auto [sender, receiver] : sockpipes)
                         if (client.remoteAddress().str() == sender || client.remoteAddress().str() == receiver) {
                             sockpipes.erase(sender);
                             cout << "Closed pipe: " << sender << " >> " << receiver << endl;
                             break;
                         }
 
-                        client.close();
-                        // clients.pop_back();
-                        
-                    }
+                    client.close();
                 }
+
+                fds[i].revents = 0;
             }
         }
     }
