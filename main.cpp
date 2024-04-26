@@ -1,17 +1,16 @@
+#define WIN32_LEAN_AND_MEAN
 #include <iostream>
 #include <thread>
 #include <filesystem>
 #include <map>
 #include <mutex>
-// #include <future>
 #include <QtCore/QtCore>
 #include <QtWidgets/QtWidgets>
-#include <QtGui/QtGui>
-#include <QtConcurrent/QtConcurrent>
-#include "../cpplibs/ssocket.hpp"
-#include "../cpplibs/strlib.hpp"
-#include "../cpplibs/libjson.hpp"
-#include "../cpplibs/libbase64.hpp"
+#include <QtCore5Compat/QTextCodec>
+#include "cpplibs/ssocket.hpp"
+#include "cpplibs/strlib.hpp"
+#include "cpplibs/libjson.hpp"
+#include "cpplibs/libbase64.hpp"
 using namespace std;
 namespace fs = filesystem;
 
@@ -35,7 +34,7 @@ class AppWindow : public QMainWindow {
     QLabel* confirmName = nullptr;
     QLabel* confirmSize = nullptr;
     QLabel* confirmFrom = nullptr;
-    
+
     Socket sock;
     Json json;
 
@@ -62,8 +61,8 @@ class AppWindow : public QMainWindow {
         lst->setColumnWidth(3, lst->width() / 4 - 1);
 
         // lst->setItem(0, 0, new QTableWidgetItem("Hello World"));
-        lst->setHorizontalHeaderLabels({"Name", "Progress", "State", "Speed"});
-        
+        lst->setHorizontalHeaderLabels({ "Name", "Progress", "State", "Speed" });
+
         lst->verticalHeader()->hide();
         // lst->setItem(1, 1, new QProgressBar());
         // lst->setCellWidget(0, 1, new QProgressBar(this));
@@ -83,28 +82,30 @@ class AppWindow : public QMainWindow {
         confirmMessage->move(30, 30);
         confirmMessage->setText("Do you want to accept this file?");
         confirmMessage->adjustSize();
-        
+
         confirmName = new QLabel(confirmDialog);
         confirmName->move(30, 50);
-        
+
         confirmSize = new QLabel(confirmDialog);
         confirmSize->move(30, 70);
-        
+
         confirmFrom = new QLabel(confirmDialog);
         confirmFrom->move(30, 90);
-        
-        connect(confirmButtons, &QDialogButtonBox::accepted, confirmDialog, [this](){
+
+        connect(confirmButtons, &QDialogButtonBox::accepted, confirmDialog, [this]() {
             fileMtx.lock();
             confirmDialog->accept();
             currentSaveName = QFileDialog::getSaveFileName(this, tr("Save file"), QString::fromStdString(currentSaveName)).toStdString();
             fileMtx.unlock();
+
+            cout << "out confirm" << endl;
         });
 
         connect(confirmButtons, &QDialogButtonBox::rejected, confirmDialog, &QDialog::reject);
     }
 
     // void addPeer(string str) {
-        
+
     // }
 
     // Q_INVOKABLE
@@ -131,7 +132,8 @@ class AppWindow : public QMainWindow {
     // }
 
     void handler() {
-        sock.open(AF_INET, SOCK_STREAM);
+        try { sock.open(AF_INET, SOCK_STREAM); }
+        catch (int e) { cout << e << endl; }
         sock.connect(server_ip, server_port);
 
         JsonNode node;
@@ -143,18 +145,25 @@ class AppWindow : public QMainWindow {
 
         while (true) {
             sockrecv_t data = sock.recv(4096);
+
+            if (!data.size) break;
+
+            cout << data.string << endl;
+
             JsonNode node = json.parse(data.string);
 
+            cout << "here" << endl;
+
             if (node["cmd"].str == "client_connected")
-            addrLst->insertItem(addrLst->count(), QString::fromStdString(node["address"].str));
-            
+                addrLst->insertItem(addrLst->count(), QString::fromStdString(node["address"].str));
+
             else if (node["cmd"].str == "client_disconnected") {
                 addrLst->setCurrentIndex(0);
                 addrLst->removeItem(addrLst->findText(QString::fromStdString(node["address"].str)));
             }
 
             else if (node["cmd"].str == "transfer_request") {
-                confirmName->setText("Filename: " + QString::fromStdString(node["filename"].str));
+                confirmName->setText("Filename: " + QString::fromUtf8(node["filename"].str));
                 confirmName->adjustSize();
 
                 confirmSize->setText("Size: " + QString::fromStdString(node["filesize"].str));
@@ -162,19 +171,21 @@ class AppWindow : public QMainWindow {
 
                 confirmFrom->setText("From: " + QString::fromStdString(node["from"].str));
                 confirmFrom->adjustSize();
-                
+
                 JsonNode node1;
 
                 currentSaveName = node["filename"].str;
 
                 if (confirmDialog->exec()) {
+                    cout << "here" << endl;
                     node1.addPair("cmd", "accept_transfer_request");
                     node1.addPair("to", node["from"].str);
 
                     fileMtx.lock();
                     rfiles[node["from"].str] = new ofstream(currentSaveName, ios::binary);
                     fileMtx.unlock();
-                } else {
+                }
+                else {
                     node1.addPair("cmd", "discard_transfer_request");
                     node1.addPair("to", node["from"].str);
                 }
@@ -209,15 +220,15 @@ public:
         // lst->setcol;
         // lst->setModelColumn(50);
         // lst->setModel(model);
-        
 
-        connect(selectFileBtn, &QPushButton::clicked, [this](){
-            currentFile = QFileDialog::getOpenFileName(this, tr("Open file")).toStdString();
+
+        connect(selectFileBtn, &QPushButton::clicked, [this]() {
+            currentFile = QFileDialog::getOpenFileName(this, tr("Open file")).toUtf8().toStdString();
             selectedFile->setText(QString::fromStdString(currentFile.string()));
             selectedFile->adjustSize();
         });
 
-        connect(sendBtn, &QPushButton::clicked, [this](){
+        connect(sendBtn, &QPushButton::clicked, [this]() {
             if (!fs::exists(currentFile) || !addrLst->currentIndex()) return;
 
             JsonNode node;
@@ -233,6 +244,12 @@ public:
 
         std::thread(&AppWindow::handler, this).detach();
     }
+
+    void closeWindow() {
+        //sock.send("close_connection");
+        sock.close();
+        close();
+    }
 };
 
 int main(int argc, char** argv) {
@@ -240,10 +257,16 @@ int main(int argc, char** argv) {
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 
+    QTextCodec::setCodecForLocale(QTextCodec::codecForName("UTF-8"));
+
     QApplication app(argc, argv);
 
     AppWindow* window = new AppWindow;
     window->show();
 
-    return app.exec();
+    int ret = app.exec();
+    
+    window->closeWindow();
+
+    return ret;
 }
