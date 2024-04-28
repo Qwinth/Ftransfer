@@ -99,7 +99,7 @@ class AppWindow : public QMainWindow {
             fileMtx.unlock();
 
             cout << "out confirm" << endl;
-        });
+            });
 
         connect(confirmButtons, &QDialogButtonBox::rejected, confirmDialog, &QDialog::reject);
     }
@@ -226,7 +226,7 @@ public:
             currentFile = QFileDialog::getOpenFileName(this, tr("Open file")).toUtf8().toStdString();
             selectedFile->setText(QString::fromStdString(currentFile.string()));
             selectedFile->adjustSize();
-        });
+            });
 
         connect(sendBtn, &QPushButton::clicked, [this]() {
             if (!fs::exists(currentFile) || !addrLst->currentIndex()) return;
@@ -238,17 +238,9 @@ public:
             node.addPair("filesize", to_string(fs::file_size(currentFile)));
 
             sock.send(json.dump(node));
-        });
-
-        // connect()
+            });
 
         std::thread(&AppWindow::handler, this).detach();
-    }
-
-    void closeWindow() {
-        //sock.send("close_connection");
-        sock.close();
-        close();
     }
 };
 
@@ -257,16 +249,12 @@ int main(int argc, char** argv) {
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 
-    QTextCodec::setCodecForLocale(QTextCodec::codecForName("UTF-8"));
+    //QTextCodec::setCodecForLocale(QTextCodec::codecForName("UTF-8"));
 
     QApplication app(argc, argv);
 
     AppWindow* window = new AppWindow;
     window->show();
 
-    int ret = app.exec();
-    
-    window->closeWindow();
-
-    return ret;
+    return app.exec()
 }
