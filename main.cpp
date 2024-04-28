@@ -217,10 +217,6 @@ public:
 
         initTable();
         initTransferDialog();
-        // lst->setcol;
-        // lst->setModelColumn(50);
-        // lst->setModel(model);
-
 
         connect(selectFileBtn, &QPushButton::clicked, [this]() {
             currentFile = QFileDialog::getOpenFileName(this, tr("Open file")).toUtf8().toStdString();
