@@ -6,7 +6,6 @@
 #include <mutex>
 #include <QtCore/QtCore>
 #include <QtWidgets/QtWidgets>
-// #include <QtCore5Compat/QTextCodec>
 #include "cpplibs/ssocket.hpp"
 #include "cpplibs/strlib.hpp"
 #include "cpplibs/libjson.hpp"
@@ -22,6 +21,8 @@ class ConnectWindow : public QMainWindow {
 };
 
 class AppWindow : public QMainWindow {
+    Q_OBJECT
+
     QPushButton* selectFileBtn = nullptr;
     QPushButton* sendBtn = nullptr;
     QTableWidget* lst = nullptr;
@@ -38,12 +39,12 @@ class AppWindow : public QMainWindow {
     Socket sock;
     Json json;
 
-    fs::path currentFile;
-
     map<string, ofstream*> rfiles;
     map<string, ifstream*> sfiles;
 
+    fs::path currentFile;
     string currentSaveName;
+    bool currentConfirmation;
 
     mutex fileMtx;
 
@@ -99,37 +100,10 @@ class AppWindow : public QMainWindow {
             fileMtx.unlock();
 
             cout << "out confirm" << endl;
-            });
+        });
 
         connect(confirmButtons, &QDialogButtonBox::rejected, confirmDialog, &QDialog::reject);
     }
-
-    // void addPeer(string str) {
-
-    // }
-
-    // Q_INVOKABLE
-    // QString getSaveFileName_(QWidget* parent, const QString& caption, const QString& dir,
-    //                         const QString& filter) {
-    //     return QFileDialog::getSaveFileName(parent, caption, dir, filter);
-    // }
-
-    // QString getSaveFileName(QWidget* parent, const QString& caption, const QString& dir = "", const QString& filter = "") {
-    //     QString fileName;
-
-    //     if (QThread::currentThread() != qApp->thread()) { // no GUI thread
-    //     QMetaObject::invokeMethod(this, "getSaveFileName_", Qt::BlockingQueuedConnection,
-    //                                 Q_RETURN_ARG(QString, fileName),
-    //                                 Q_ARG(QWidget*, parent),
-    //                                 Q_ARG(QString, caption),
-    //                                 Q_ARG(QString, dir),
-    //                                 Q_ARG(QString, filter));
-    //     } else { // in GUI thread, direct call
-    //         fileName = getSaveFileName_(parent, caption, dir, filter);
-    //     }
-
-    //     return fileName;
-    // }
 
     void handler() {
         try { sock.open(AF_INET, SOCK_STREAM); }
@@ -176,7 +150,8 @@ class AppWindow : public QMainWindow {
 
                 currentSaveName = node["filename"].str;
 
-                if (confirmDialog->exec()) {
+                emit confirm();
+                if (currentConfirmation) {
                     cout << "here" << endl;
                     node1.addPair("cmd", "accept_transfer_request");
                     node1.addPair("to", node["from"].str);
@@ -222,7 +197,7 @@ public:
             currentFile = QFileDialog::getOpenFileName(this, tr("Open file")).toUtf8().toStdString();
             selectedFile->setText(QString::fromStdString(currentFile.string()));
             selectedFile->adjustSize();
-            });
+        });
 
         connect(sendBtn, &QPushButton::clicked, [this]() {
             if (!fs::exists(currentFile) || !addrLst->currentIndex()) return;
@@ -234,11 +209,20 @@ public:
             node.addPair("filesize", to_string(fs::file_size(currentFile)));
 
             sock.send(json.dump(node));
-            });
+        });
+
+        connect(this, &AppWindow::confirm, [this](){
+            currentConfirmation = confirmDialog->exec();
+        });
 
         std::thread(&AppWindow::handler, this).detach();
     }
+    
+signals:
+    void confirm();
 };
+
+#include "main.moc"
 
 int main(int argc, char** argv) {
     QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
