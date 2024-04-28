@@ -206,8 +206,6 @@ public:
             selectedFile->setText(QString::fromStdString(currentFile.string()));
 #endif
             selectedFile->adjustSize();
-            cout << "Exists: " << boolalpha << fs::exists(currentFile) << endl;
-            cout << "Current file: " << wstr2str(currentFile.wstring()) << endl;
         });
 
         connect(sendBtn, &QPushButton::clicked, [this]() {
