@@ -256,5 +256,5 @@ int main(int argc, char** argv) {
     AppWindow* window = new AppWindow;
     window->show();
 
-    return app.exec()
+    return app.exec();
 }
