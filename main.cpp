@@ -23,7 +23,7 @@ class ConnectWindow : public QMainWindow {
 class AppWindow : public QMainWindow {
     Q_OBJECT
 
-    QPushButton* selectFileBtn = nullptr;
+        QPushButton* selectFileBtn = nullptr;
     QPushButton* sendBtn = nullptr;
     QTableWidget* lst = nullptr;
     QComboBox* addrLst = nullptr;
@@ -100,15 +100,19 @@ class AppWindow : public QMainWindow {
             fileMtx.unlock();
 
             cout << "out confirm" << endl;
-        });
+            });
 
         connect(confirmButtons, &QDialogButtonBox::rejected, confirmDialog, &QDialog::reject);
     }
 
     void handler() {
-        try { sock.open(AF_INET, SOCK_STREAM); }
-        catch (int e) { cout << e << endl; }
-        sock.connect(server_ip, server_port);
+        try {
+            sock.open(AF_INET, SOCK_STREAM);
+            sock.connect(server_ip, server_port);
+        } catch (int e) {
+            cout << e << endl;
+            return;
+        }
 
         JsonNode node;
         node.addPair("cmd", "cl_list");
@@ -125,8 +129,6 @@ class AppWindow : public QMainWindow {
             cout << data.string << endl;
 
             JsonNode node = json.parse(data.string);
-
-            cout << "here" << endl;
 
             if (node["cmd"].str == "client_connected")
                 addrLst->insertItem(addrLst->count(), QString::fromStdString(node["address"].str));
@@ -157,7 +159,7 @@ class AppWindow : public QMainWindow {
                     node1.addPair("to", node["from"].str);
 
                     fileMtx.lock();
-                    rfiles[node["from"].str] = new ofstream(currentSaveName, ios::binary);
+                    rfiles[node["from"].str] = new ofstream(str2wstr(currentSaveName), ios::binary);
                     fileMtx.unlock();
                 }
                 else {
@@ -167,7 +169,6 @@ class AppWindow : public QMainWindow {
 
                 sock.send(json.dump(node1));
             }
-            // askForTransfer(, node["filesize"].str, node["from"].str);
 
         }
     }
@@ -193,10 +194,14 @@ public:
         initTable();
         initTransferDialog();
 
+        //confirmDialog->exec();
+
         connect(selectFileBtn, &QPushButton::clicked, [this]() {
-            currentFile = QFileDialog::getOpenFileName(this, tr("Open file")).toUtf8().toStdString();
-            selectedFile->setText(QString::fromStdString(currentFile.string()));
+            currentFile = str2wstr(QFileDialog::getOpenFileName(this, tr("Open file")).toStdString());
+            selectedFile->setText(QString::fromStdString(wstr2str(currentFile.wstring())));
             selectedFile->adjustSize();
+            cout << "Exists: " << boolalpha << fs::exists(currentFile) << endl;
+            cout << "Current file: " << wstr2str(currentFile.wstring()) << endl;
         });
 
         connect(sendBtn, &QPushButton::clicked, [this]() {
@@ -205,19 +210,17 @@ public:
             JsonNode node;
             node.addPair("cmd", "transfer_request");
             node.addPair("to", addrLst->currentText().toStdString());
-            node.addPair("filename", currentFile.filename().string());
+            node.addPair("filename", wstr2str(currentFile.filename().wstring()));
             node.addPair("filesize", to_string(fs::file_size(currentFile)));
 
             sock.send(json.dump(node));
         });
 
-        connect(this, &AppWindow::confirm, [this](){
-            currentConfirmation = confirmDialog->exec();
-        });
+        connect(this, &AppWindow::confirm, this, [this]() { currentConfirmation = confirmDialog->exec(); }, Qt::BlockingQueuedConnection);
 
         std::thread(&AppWindow::handler, this).detach();
     }
-    
+
 signals:
     void confirm();
 };
@@ -225,6 +228,9 @@ signals:
 #include "main.moc"
 
 int main(int argc, char** argv) {
+    /*setlocale*/
+    //SetConsoleOutputCP(CP_UTF8);
+
     QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     // QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
