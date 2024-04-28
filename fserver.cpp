@@ -5,6 +5,8 @@
 #include "cpplibs/libjson.hpp"
 using namespace std;
 
+vector<pollfd> fds;
+
 struct client_t {
     Socket sock;
     string name;
@@ -103,11 +105,11 @@ int handler(Socket sock) {
     return cmd.size;
 }
 
-void closeConnection(vector<pollfd>& fds, int i) {
+void closeConnection(int i) {
     Socket client = clients[fds[i].fd];
 
     clients.erase(fds[i].fd);
-    fds.erase(fds.begin() + i--);
+    fds.erase(fds.begin() + i);
 
     JsonNode node;
     node.addPair("cmd", "client_disconnected");
@@ -131,7 +133,6 @@ int main() {
     sock.bind("", 9723);
     sock.listen(0);
 
-    vector<pollfd> fds;
     fds.push_back({ sock.fd(), POLLIN, 0 });
 
     while (true) {
@@ -154,11 +155,9 @@ int main() {
             else for (int i = 1; i < fds.size(); i++) {
                 Socket client = clients[fds[i].fd];
 
-                if (fds[i].revents & POLLIN) {
-                    if (!handler(client)) closeConnection(fds, i);
-                }
-
-                else if (fds[i].revents & POLLHUP) closeConnection(fds, i);
+                if (fds[i].revents & POLLIN) if (!handler(client)) closeConnection(i--);
+                
+                else if (fds[i].revents & POLLHUP) closeConnection(i--);
 
                 fds[i].revents = 0;
             }

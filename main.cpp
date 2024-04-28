@@ -6,7 +6,7 @@
 #include <mutex>
 #include <QtCore/QtCore>
 #include <QtWidgets/QtWidgets>
-#include <QtCore5Compat/QTextCodec>
+// #include <QtCore5Compat/QTextCodec>
 #include "cpplibs/ssocket.hpp"
 #include "cpplibs/strlib.hpp"
 #include "cpplibs/libjson.hpp"
@@ -163,7 +163,7 @@ class AppWindow : public QMainWindow {
             }
 
             else if (node["cmd"].str == "transfer_request") {
-                confirmName->setText("Filename: " + QString::fromUtf8(node["filename"].str));
+                confirmName->setText("Filename: " + QString::fromStdString(node["filename"].str));
                 confirmName->adjustSize();
 
                 confirmSize->setText("Size: " + QString::fromStdString(node["filesize"].str));
