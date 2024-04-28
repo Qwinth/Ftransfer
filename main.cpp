@@ -55,16 +55,13 @@ class AppWindow : public QMainWindow {
         lst = new QTableWidget(0, 4, this);
         lst->setGeometry(60, 110, 680, 270);
         lst->setShowGrid(false);
-
-        lst->setColumnWidth(0, lst->width() / 4 - 1);
-        lst->setColumnWidth(1, lst->width() / 4 - 1);
-        lst->setColumnWidth(2, lst->width() / 4 - 1);
-        lst->setColumnWidth(3, lst->width() / 4 - 1);
+        lst->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
 
         // lst->setItem(0, 0, new QTableWidgetItem("Hello World"));
         lst->setHorizontalHeaderLabels({ "Name", "Progress", "State", "Speed" });
 
         lst->verticalHeader()->hide();
+        
         // lst->setItem(1, 1, new QProgressBar());
         // lst->setCellWidget(0, 1, new QProgressBar(this));
         // ((QProgressBar*)lst->cellWidget(0, 1))->setValue(60);
