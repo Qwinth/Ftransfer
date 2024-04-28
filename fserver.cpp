@@ -103,6 +103,28 @@ int handler(Socket sock) {
     return cmd.size;
 }
 
+void closeConnection(vector<pollfd>& fds, int i) {
+    Socket client = clients[fds[i].fd];
+
+    clients.erase(fds[i].fd);
+    fds.erase(fds.begin() + i--);
+
+    JsonNode node;
+    node.addPair("cmd", "client_disconnected");
+    node.addPair("address", client.remoteAddress().str());
+
+    for (auto i : clients) i.second.send(json.dump(node));
+
+    for (auto [sender, receiver] : sockpipes)
+    if (client.remoteAddress().str() == sender || client.remoteAddress().str() == receiver) {
+        sockpipes.erase(sender);
+        cout << "Closed pipe: " << sender << " >> " << receiver << endl;
+        break;
+    }
+
+    client.close();
+}
+
 int main() {
     Socket sock(AF_INET, SOCK_STREAM);
     sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1);
@@ -110,15 +132,12 @@ int main() {
     sock.listen(0);
 
     vector<pollfd> fds;
-    fds.push_back({ (SOCKET)sock.fd(), POLLIN, 0 });
+    fds.push_back({ sock.fd(), POLLIN, 0 });
 
     while (true) {
-        cout << "here" << endl;
         if (poll(fds.data(), fds.size(), -1)) {
-            cout << "here2" << endl;
             if (fds[0].revents & POLLIN) {
                 auto tmp = sock.accept();
-                cout << "new client: " << tmp.second.str() << endl;
 
                 JsonNode node;
                 node.addPair("cmd", "client_connected");
@@ -126,7 +145,7 @@ int main() {
 
                 for (auto i : clients) i.second.send(json.dump(node));
 
-                fds.push_back({ (SOCKET)tmp.first.fd(), POLLIN, 0 });
+                fds.push_back({ tmp.first.fd(), POLLIN, 0 });
                 clients[tmp.first.fd()] = tmp.first;
 
                 fds[0].revents = 0;
@@ -136,48 +155,10 @@ int main() {
                 Socket client = clients[fds[i].fd];
 
                 if (fds[i].revents & POLLIN) {
-                    if (!handler(client)) {
-                        cout << "client close: " << client.remoteAddress().str() << endl;
-
-                        clients.erase(fds[i].fd);
-                        fds.erase(fds.begin() + i--);
-
-                        JsonNode node;
-                        node.addPair("cmd", "client_disconnected");
-                        node.addPair("address", client.remoteAddress().str());
-
-                        for (auto i : clients) i.second.send(json.dump(node));
-
-                        for (auto [sender, receiver] : sockpipes)
-                            if (client.remoteAddress().str() == sender || client.remoteAddress().str() == receiver) {
-                                sockpipes.erase(sender);
-                                cout << "Closed pipe: " << sender << " >> " << receiver << endl;
-                                break;
-                            }
-
-                        client.close();
-                    }
+                    if (!handler(client)) closeConnection(fds, i);
                 }
 
-                else if (fds[i].revents & POLLHUP) {
-                    clients.erase(fds[i].fd);
-                    fds.erase(fds.begin() + i--);
-
-                    JsonNode node;
-                    node.addPair("cmd", "client_disconnected");
-                    node.addPair("address", client.remoteAddress().str());
-
-                    for (auto i : clients) i.second.send(json.dump(node));
-
-                    for (auto [sender, receiver] : sockpipes)
-                        if (client.remoteAddress().str() == sender || client.remoteAddress().str() == receiver) {
-                            sockpipes.erase(sender);
-                            cout << "Closed pipe: " << sender << " >> " << receiver << endl;
-                            break;
-                        }
-
-                    client.close();
-                }
+                else if (fds[i].revents & POLLHUP) closeConnection(fds, i);
 
                 fds[i].revents = 0;
             }
