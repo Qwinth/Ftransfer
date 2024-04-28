@@ -198,8 +198,13 @@ public:
         //confirmDialog->exec();
 
         connect(selectFileBtn, &QPushButton::clicked, [this]() {
+#ifdef _WIN32
             currentFile = str2wstr(QFileDialog::getOpenFileName(this, tr("Open file")).toStdString());
             selectedFile->setText(QString::fromStdString(wstr2str(currentFile.wstring())));
+#else       
+            currentFile = QFileDialog::getOpenFileName(this, tr("Open file")).toStdString();
+            selectedFile->setText(QString::fromStdString(currentFile.string()));
+#endif
             selectedFile->adjustSize();
             cout << "Exists: " << boolalpha << fs::exists(currentFile) << endl;
             cout << "Current file: " << wstr2str(currentFile.wstring()) << endl;
