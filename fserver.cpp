@@ -118,11 +118,11 @@ void closeConnection(int i) {
     for (auto i : clients) i.second.send(json.dump(node));
 
     for (auto [sender, receiver] : sockpipes)
-    if (client.remoteAddress().str() == sender || client.remoteAddress().str() == receiver) {
-        sockpipes.erase(sender);
-        cout << "Closed pipe: " << sender << " >> " << receiver << endl;
-        break;
-    }
+        if (client.remoteAddress().str() == sender || client.remoteAddress().str() == receiver) {
+            sockpipes.erase(sender);
+            cout << "Closed pipe: " << sender << " >> " << receiver << endl;
+            break;
+        }
 
     client.close();
 }
@@ -153,10 +153,11 @@ int main() {
             }
 
             else for (int i = 1; i < fds.size(); i++) {
+                
                 Socket client = clients[fds[i].fd];
 
-                if (fds[i].revents & POLLIN) if (!handler(client)) closeConnection(i--);
-                
+                if (fds[i].revents & POLLIN) { if (!handler(client)) closeConnection(i--); }
+
                 else if (fds[i].revents & POLLHUP) closeConnection(i--);
 
                 fds[i].revents = 0;
