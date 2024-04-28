@@ -23,7 +23,7 @@ class ConnectWindow : public QMainWindow {
 class AppWindow : public QMainWindow {
     Q_OBJECT
 
-        QPushButton* selectFileBtn = nullptr;
+    QPushButton* selectFileBtn = nullptr;
     QPushButton* sendBtn = nullptr;
     QTableWidget* lst = nullptr;
     QComboBox* addrLst = nullptr;
@@ -156,7 +156,11 @@ class AppWindow : public QMainWindow {
                     node1.addPair("to", node["from"].str);
 
                     fileMtx.lock();
+#ifdef _WIN32
                     rfiles[node["from"].str] = new ofstream(str2wstr(currentSaveName), ios::binary);
+#else
+                    rfiles[node["from"].str] = new ofstream(currentSaveName, ios::binary);
+#endif
                     fileMtx.unlock();
                 }
                 else {
