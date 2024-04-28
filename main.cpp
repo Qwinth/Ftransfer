@@ -216,7 +216,11 @@ public:
             JsonNode node;
             node.addPair("cmd", "transfer_request");
             node.addPair("to", addrLst->currentText().toStdString());
+#ifdef _WIN32
             node.addPair("filename", wstr2str(currentFile.filename().wstring()));
+#else
+            node.addPair("filename", currentFile.filename().string());
+#endif
             node.addPair("filesize", to_string(fs::file_size(currentFile)));
 
             sock.send(json.dump(node));
