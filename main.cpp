@@ -241,7 +241,7 @@ class AppWindow : public QMainWindow {
                 delete[] encbuffer;
             }
 
-            else if (node["cmd"].str == "transfer_diascard") {
+            else if (node["cmd"].str == "transfer_discard") {
                 
 
             }
