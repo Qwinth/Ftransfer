@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <map>
 #include <mutex>
+#include <utility>
 #include <QtCore/QtCore>
 #include <QtWidgets/QtWidgets>
 #include "cpplibs/ssocket.hpp"
@@ -15,6 +16,8 @@ namespace fs = filesystem;
 
 string server_ip = "";
 int server_port = 9723;
+
+int buffer_size = 16384;
 
 class ConnectWindow : public QMainWindow {
 
@@ -37,16 +40,18 @@ class AppWindow : public QMainWindow {
     QLabel* confirmFrom = nullptr;
 
     Socket sock;
+    Base64 base64;
     Json json;
 
-    map<string, ofstream*> rfiles;
-    map<string, ifstream*> sfiles;
+    map<string, map<string, ofstream*>> wfiles;
+    map<string, map<string, ifstream*>> rfiles;
 
     fs::path currentFile;
     string currentSaveName;
     bool currentConfirmation;
 
     mutex fileMtx;
+    mutex sockMtx;
 
     // void resizeEvent(QResizeEvent* event) {
     //     btn1->resize(event->size());
@@ -95,9 +100,7 @@ class AppWindow : public QMainWindow {
             confirmDialog->accept();
             currentSaveName = QFileDialog::getSaveFileName(this, tr("Save file"), QString::fromStdString(currentSaveName)).toStdString();
             fileMtx.unlock();
-
-            cout << "out confirm" << endl;
-            });
+        });
 
         connect(confirmButtons, &QDialogButtonBox::rejected, confirmDialog, &QDialog::reject);
     }
@@ -119,11 +122,10 @@ class AppWindow : public QMainWindow {
         for (auto i : node["clients"].array) addrLst->insertItem(addrLst->count(), QString::fromStdString(i.str));
 
         while (true) {
-            sockrecv_t data = sock.recv(4096);
+            sockrecv_t data = sock.recv(65536);
+            // sockMtx.lock();
 
             if (!data.size) break;
-
-            cout << data.string << endl;
 
             JsonNode node = json.parse(data.string);
 
@@ -133,13 +135,26 @@ class AppWindow : public QMainWindow {
             else if (node["cmd"].str == "client_disconnected") {
                 addrLst->setCurrentIndex(0);
                 addrLst->removeItem(addrLst->findText(QString::fromStdString(node["address"].str)));
+
+                for (auto [name, file] : rfiles[node["address"].str]) {
+                    file->close();
+                    delete file;
+                }
+
+                for (auto [name, file] : wfiles[node["address"].str]) {
+                    file->close();
+                    delete file;
+                }
+
+                rfiles.erase(node["address"].str);
+                wfiles.erase(node["address"].str);
             }
 
             else if (node["cmd"].str == "transfer_request") {
                 confirmName->setText("Filename: " + QString::fromStdString(node["filename"].str));
                 confirmName->adjustSize();
 
-                confirmSize->setText("Size: " + QString::fromStdString(node["filesize"].str));
+                confirmSize->setText("Size: " + QString::number(node["filesize"].integer));
                 confirmSize->adjustSize();
 
                 confirmFrom->setText("From: " + QString::fromStdString(node["from"].str));
@@ -151,26 +166,87 @@ class AppWindow : public QMainWindow {
 
                 emit confirm();
                 if (currentConfirmation) {
-                    cout << "here" << endl;
                     node1.addPair("cmd", "accept_transfer_request");
+                    node1.addPair("filename", node["filename"].str);
                     node1.addPair("to", node["from"].str);
 
                     fileMtx.lock();
 #ifdef _WIN32
-                    rfiles[node["from"].str] = new ofstream(str2wstr(currentSaveName), ios::binary);
+                    wfiles[node["from"].str][node["filename"].str] = new ofstream(str2wstr(currentSaveName), ios::binary);
 #else
-                    rfiles[node["from"].str] = new ofstream(currentSaveName, ios::binary);
+                    wfiles[node["from"].str][node["filename"].str] = new ofstream(currentSaveName, ios::binary);
 #endif
                     fileMtx.unlock();
                 }
+
                 else {
                     node1.addPair("cmd", "discard_transfer_request");
+                    node1.addPair("filename", node["filename"].str);
                     node1.addPair("to", node["from"].str);
                 }
 
                 sock.send(json.dump(node1));
             }
 
+            else if (node["cmd"].str == "transfer_packet") {
+                size_t size = node["true_size"].integer;
+                char* buffer = new char[size];
+
+                base64.decode(node["data"].str.c_str(), buffer, node["data"].str.size());
+
+                wfiles[node["from"].str][node["filename"].str]->write(buffer, size);
+
+                if (node["eof"].boolean) {
+                    wfiles[node["from"].str][node["filename"].str]->close();
+
+                    delete wfiles[node["from"].str][node["filename"].str];
+                    wfiles.erase(node["from"].str);
+                }
+
+                JsonNode node1;
+                node1.addPair("cmd", "packet_received");
+                node1.addPair("filename", node["filename"].str);
+                node1.addPair("eof", node["eof"].boolean);
+                node1.addPair("to", node["from"].str);
+
+                sock.send(json.dump(node1));
+
+                delete[] buffer;
+            }
+
+            else if (node["cmd"].str == "packet_received" || node["cmd"].str == "transfer_accept") {
+                if (node["eof"].boolean) continue;
+
+                char* buffer = new char[buffer_size];
+                char* encbuffer = new char[base64.calculateEncodedSize(buffer_size)];
+
+                rfiles[node["from"].str][node["filename"].str]->read(buffer, buffer_size);
+                int gcount = rfiles[node["from"].str][node["filename"].str]->gcount();
+
+                base64.encode(buffer, encbuffer, gcount);
+
+                bool eof = gcount < buffer_size;
+
+                JsonNode node1;
+                node1.addPair("cmd", "transfer_packet");
+                node1.addPair("to", node["from"].str);
+                node1.addPair("filename", node["filename"].str);
+                node1.addPair("data", string(encbuffer, base64.calculateEncodedSize(gcount)));
+                node1.addPair("true_size", gcount);
+                node1.addPair("eof", eof);
+
+                sock.send(json.dump(node1));
+
+                delete[] buffer;
+                delete[] encbuffer;
+            }
+
+            else if (node["cmd"].str == "transfer_diascard") {
+                
+
+            }
+        
+            // sockMtx.unlock();
         }
     }
 public:
@@ -219,9 +295,11 @@ public:
 #else
             node.addPair("filename", currentFile.filename().string());
 #endif
-            node.addPair("filesize", to_string(fs::file_size(currentFile)));
+            node.addPair("filesize", (long)fs::file_size(currentFile));
 
             sock.send(json.dump(node));
+
+            rfiles[node["to"].str][node["filename"].str] = new ifstream(currentFile, ios::binary);
         });
 
         connect(this, &AppWindow::confirm, this, [this]() { currentConfirmation = confirmDialog->exec(); }, Qt::BlockingQueuedConnection);

@@ -13,7 +13,6 @@ struct client_t {
 };
 
 map<string, string> sockpipes;
-map<string, string> transfer_requests;
 map<int, Socket> clients;
 
 Json json;
@@ -29,7 +28,7 @@ int vecFind(Socket sock) {
 }
 
 int handler(Socket sock) {
-    sockrecv_t cmd = sock.recv(8192);
+    sockrecv_t cmd = sock.recv(65536);
 
     if (!cmd.size || cmd.string == "close_connection") return 0;
 
@@ -51,55 +50,64 @@ int handler(Socket sock) {
         node1.addPair("cmd", node["cmd"].str);
         node1.addPair("from", sock.remoteAddress().str());
         node1.addPair("filename", node["filename"].str);
-        node1.addPair("filesize", node["filesize"].str);
+        node1.addPair("filesize", node["filesize"].integer);
 
         findClient(node["to"].str).send(json.dump(node1));
-
-        transfer_requests[sock.remoteAddress().str()] = node["to"].str;
     }
 
     else if (node["cmd"].str == "accept_transfer_request") {
         JsonNode node1;
-        node1.addPair("cmd", "accept");
+        node1.addPair("cmd", "transfer_accept");
         node1.addPair("from", sock.remoteAddress().str());
+        node1.addPair("filename", node["filename"].str);
 
         findClient(node["to"].str).send(json.dump(node1));
 
         sockpipes[node["to"].str] = sock.remoteAddress().str();
-        transfer_requests.erase(node["to"].str);
 
         cout << "Created pipe: " << node["to"].str << " >> " << sock.remoteAddress().str() << endl;
     }
 
     else if (node["cmd"].str == "discard_transfer_request") {
         JsonNode node1;
-        node1.addPair("cmd", "discard");
+        node1.addPair("cmd", "transfer_discard");
         node1.addPair("from", sock.remoteAddress().str());
+        node1.addPair("filename", node["filename"].str);
 
         findClient(node["to"].str).send(json.dump(node1));
-
-        transfer_requests.erase(node["to"].str);
     }
 
     else if (node["cmd"].str == "transfer_packet") {
         JsonNode node1;
 
-        if (sockpipes.find(sock.remoteAddress().str()) != sockpipes.end() || sockpipes[sock.remoteAddress().str()] != node["to"].str) {
+        if (sockpipes.find(sock.remoteAddress().str()) == sockpipes.end() || sockpipes[sock.remoteAddress().str()] != node["to"].str) {
             node1.addPair("cmd", "transfer_forbidden");
             sock.send(json.dump(node1));
+
+            cout << "transfer forbidden" << endl;
         }
 
         else {
             node1.addPair("cmd", node["cmd"].str);
             node1.addPair("from", sock.remoteAddress().str());
+            node1.addPair("filename", node["filename"].str);
             node1.addPair("data", node["data"].str);
+            node1.addPair("true_size", node["true_size"].integer);
+            node1.addPair("eof", node["eof"].boolean);
 
             findClient(node["to"].str).send(json.dump(node1));
         }
     }
 
     else if (node["cmd"].str == "packet_received") {
+        JsonNode node1;
+        
+        node1.addPair("cmd", node["cmd"].str);
+        node1.addPair("filename", node["filename"].str);
+        node1.addPair("eof", node["eof"].boolean);
+        node1.addPair("from", sock.remoteAddress().str());
 
+        findClient(node["to"].str).send(json.dump(node1));
     }
 
     return cmd.size;
