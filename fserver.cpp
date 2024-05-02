@@ -1,6 +1,7 @@
 #include <map>
 #include <vector>
 #include <string>
+#include <algorithm>
 #include "cpplibs/ssocket.hpp"
 #include "cpplibs/libjson.hpp"
 using namespace std;
@@ -12,7 +13,7 @@ struct client_t {
     string name;
 };
 
-map<string, string> sockpipes;
+map<string, vector<string>> sockpipes;
 map<int, Socket> clients;
 
 Json json;
@@ -28,7 +29,7 @@ int vecFind(Socket sock) {
 }
 
 int handler(Socket sock) {
-    sockrecv_t cmd = sock.recv(65536);
+    sockrecv_t cmd = sock.recvmsg();
 
     if (!cmd.size || cmd.string == "close_connection") return 0;
 
@@ -42,7 +43,7 @@ int handler(Socket sock) {
         for (auto i : clients) if (i.second != sock) node2.arrayAppend(i.second.remoteAddress().str());
 
         node1.addPair("clients", node2);
-        sock.send(json.dump(node1));
+        sock.sendmsg(json.dump(node1));
     }
 
     else if (node["cmd"].str == "transfer_request") {
@@ -52,7 +53,7 @@ int handler(Socket sock) {
         node1.addPair("filename", node["filename"].str);
         node1.addPair("filesize", node["filesize"].integer);
 
-        findClient(node["to"].str).send(json.dump(node1));
+        findClient(node["to"].str).sendmsg(json.dump(node1));
     }
 
     else if (node["cmd"].str == "accept_transfer_request") {
@@ -61,9 +62,9 @@ int handler(Socket sock) {
         node1.addPair("from", sock.remoteAddress().str());
         node1.addPair("filename", node["filename"].str);
 
-        findClient(node["to"].str).send(json.dump(node1));
+        findClient(node["to"].str).sendmsg(json.dump(node1));
 
-        sockpipes[node["to"].str] = sock.remoteAddress().str();
+        sockpipes[node["to"].str].push_back(sock.remoteAddress().str());
 
         cout << "Created pipe: " << node["to"].str << " >> " << sock.remoteAddress().str() << endl;
     }
@@ -74,15 +75,15 @@ int handler(Socket sock) {
         node1.addPair("from", sock.remoteAddress().str());
         node1.addPair("filename", node["filename"].str);
 
-        findClient(node["to"].str).send(json.dump(node1));
+        findClient(node["to"].str).sendmsg(json.dump(node1));
     }
 
     else if (node["cmd"].str == "transfer_packet") {
         JsonNode node1;
 
-        if (sockpipes.find(sock.remoteAddress().str()) == sockpipes.end() || sockpipes[sock.remoteAddress().str()] != node["to"].str) {
+        if (sockpipes.find(sock.remoteAddress().str()) == sockpipes.end() || find(sockpipes[sock.remoteAddress().str()].begin(), sockpipes[sock.remoteAddress().str()].end(), node["to"].str) == sockpipes[sock.remoteAddress().str()].end()) {
             node1.addPair("cmd", "transfer_forbidden");
-            sock.send(json.dump(node1));
+            sock.sendmsg(json.dump(node1));
 
             cout << "transfer forbidden" << endl;
         }
@@ -95,7 +96,12 @@ int handler(Socket sock) {
             node1.addPair("true_size", node["true_size"].integer);
             node1.addPair("eof", node["eof"].boolean);
 
-            findClient(node["to"].str).send(json.dump(node1));
+            if (node["eof"].boolean) {
+                sockpipes[sock.remoteAddress().str()].erase(find(sockpipes[sock.remoteAddress().str()].begin(), sockpipes[sock.remoteAddress().str()].end(), node["to"].str));
+                cout << "Closed pipe: " << sock.remoteAddress().str() << " >> " << node["to"].str << endl;
+            }
+
+            findClient(node["to"].str).sendmsg(json.dump(node1));
         }
     }
 
@@ -104,10 +110,9 @@ int handler(Socket sock) {
         
         node1.addPair("cmd", node["cmd"].str);
         node1.addPair("filename", node["filename"].str);
-        node1.addPair("eof", node["eof"].boolean);
         node1.addPair("from", sock.remoteAddress().str());
 
-        findClient(node["to"].str).send(json.dump(node1));
+        findClient(node["to"].str).sendmsg(json.dump(node1));
     }
 
     return cmd.size;
@@ -123,14 +128,23 @@ void closeConnection(int i) {
     node.addPair("cmd", "client_disconnected");
     node.addPair("address", client.remoteAddress().str());
 
-    for (auto i : clients) i.second.send(json.dump(node));
+    for (auto i : clients) i.second.sendmsg(json.dump(node));
 
-    for (auto [sender, receiver] : sockpipes)
-        if (client.remoteAddress().str() == sender || client.remoteAddress().str() == receiver) {
-            sockpipes.erase(sender);
-            cout << "Closed pipe: " << sender << " >> " << receiver << endl;
-            break;
+    if (sockpipes.find(client.remoteAddress().str()) != sockpipes.end()) {
+        for (auto i : sockpipes[client.remoteAddress().str()])
+        cout << "Closed pipe: " << client.remoteAddress().str() << " >> " << i << endl;
+    }
+
+    else {
+        for (auto [sender, receiver] : sockpipes) {
+            auto i = find(receiver.begin(), receiver.end(), client.remoteAddress().str());
+            if (i != receiver.end()) {
+                receiver.erase(i);
+                cout << "Closed pipe: " << sender << " >> " << client.remoteAddress().str() << endl;
+                break;
+            }
         }
+    }
 
     client.close();
 }
@@ -152,7 +166,7 @@ int main() {
                 node.addPair("cmd", "client_connected");
                 node.addPair("address", tmp.second.str());
 
-                for (auto i : clients) i.second.send(json.dump(node));
+                for (auto i : clients) i.second.sendmsg(json.dump(node));
 
                 fds.push_back({ tmp.first.fd(), POLLIN, 0 });
                 clients[tmp.first.fd()] = tmp.first;

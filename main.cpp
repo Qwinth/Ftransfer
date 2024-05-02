@@ -17,7 +17,11 @@ namespace fs = filesystem;
 string server_ip = "";
 int server_port = 9723;
 
-int buffer_size = 16384;
+int buffer_size = 1024 * 1024;
+
+uint64_t math_map(uint64_t x, uint64_t in_min, uint64_t in_max, uint64_t out_min, uint64_t out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
 
 class ConnectWindow : public QMainWindow {
 
@@ -45,6 +49,8 @@ class AppWindow : public QMainWindow {
 
     map<string, map<string, ofstream*>> wfiles;
     map<string, map<string, ifstream*>> rfiles;
+
+    map<string, map<string, int>> table;
 
     fs::path currentFile;
     string currentSaveName;
@@ -116,16 +122,17 @@ class AppWindow : public QMainWindow {
 
         JsonNode node;
         node.addPair("cmd", "cl_list");
-        sock.send(json.dump(node));
+        sock.sendmsg(json.dump(node));
 
-        node = json.parse(sock.recv(8192).string);
+        node = json.parse(sock.recvmsg().string);
         for (auto i : node["clients"].array) addrLst->insertItem(addrLst->count(), QString::fromStdString(i.str));
 
         while (true) {
-            sockrecv_t data = sock.recv(65536);
+            sockrecv_t data = sock.recvmsg();
             // sockMtx.lock();
-
             if (!data.size) break;
+
+            // cout << data.string << " " << data.size << endl;
 
             JsonNode node = json.parse(data.string);
 
@@ -136,18 +143,30 @@ class AppWindow : public QMainWindow {
                 addrLst->setCurrentIndex(0);
                 addrLst->removeItem(addrLst->findText(QString::fromStdString(node["address"].str)));
 
-                for (auto [name, file] : rfiles[node["address"].str]) {
-                    file->close();
-                    delete file;
+                if (rfiles.find(node["address"].str) != rfiles.end()) {
+                    for (auto [name, file] : rfiles[node["address"].str]) {
+                        cout << "Delete rfile fd: " << node["address"].str << " " << name << endl;
+
+                        file->close();
+                        delete file;
+                    }
+
+                    rfiles.erase(node["address"].str);
                 }
 
-                for (auto [name, file] : wfiles[node["address"].str]) {
-                    file->close();
-                    delete file;
+                if (wfiles.find(node["address"].str) != wfiles.end()) {
+                    for (auto [name, file] : wfiles[node["address"].str]) {
+                        cout << "Delete wfile fd: " << node["address"].str << " " << name << endl;
+
+                        file->close();
+                        delete file;
+                    }
+
+                    wfiles.erase(node["address"].str);
                 }
 
-                rfiles.erase(node["address"].str);
-                wfiles.erase(node["address"].str);
+                
+                
             }
 
             else if (node["cmd"].str == "transfer_request") {
@@ -185,7 +204,7 @@ class AppWindow : public QMainWindow {
                     node1.addPair("to", node["from"].str);
                 }
 
-                sock.send(json.dump(node1));
+                sock.sendmsg(json.dump(node1));
             }
 
             else if (node["cmd"].str == "transfer_packet") {
@@ -201,22 +220,23 @@ class AppWindow : public QMainWindow {
 
                     delete wfiles[node["from"].str][node["filename"].str];
                     wfiles.erase(node["from"].str);
+
+                    cout << "Delete wfile fd: " << node["from"].str << " " << node["filename"].str << endl;
                 }
 
-                JsonNode node1;
-                node1.addPair("cmd", "packet_received");
-                node1.addPair("filename", node["filename"].str);
-                node1.addPair("eof", node["eof"].boolean);
-                node1.addPair("to", node["from"].str);
+                else {
+                    JsonNode node1;
+                    node1.addPair("cmd", "packet_received");
+                    node1.addPair("filename", node["filename"].str);
+                    node1.addPair("to", node["from"].str);
 
-                sock.send(json.dump(node1));
+                    sock.sendmsg(json.dump(node1));
+                }
 
                 delete[] buffer;
             }
 
             else if (node["cmd"].str == "packet_received" || node["cmd"].str == "transfer_accept") {
-                if (node["eof"].boolean) continue;
-
                 char* buffer = new char[buffer_size];
                 char* encbuffer = new char[base64.calculateEncodedSize(buffer_size)];
 
@@ -227,6 +247,19 @@ class AppWindow : public QMainWindow {
 
                 bool eof = gcount < buffer_size;
 
+                cout << "Sending packet: " << node["filename"].str << " to: " << node["from"].str << endl;
+
+                
+
+                if (eof) {
+                    rfiles[node["from"].str][node["filename"].str]->close();
+
+                    delete rfiles[node["from"].str][node["filename"].str];
+                    rfiles.erase(node["from"].str);
+
+                    cout << "Delete rfile fd: " << node["from"].str << " " << node["filename"].str << endl;
+                }
+
                 JsonNode node1;
                 node1.addPair("cmd", "transfer_packet");
                 node1.addPair("to", node["from"].str);
@@ -235,7 +268,7 @@ class AppWindow : public QMainWindow {
                 node1.addPair("true_size", gcount);
                 node1.addPair("eof", eof);
 
-                sock.send(json.dump(node1));
+                sock.sendmsg(json.dump(node1));
 
                 delete[] buffer;
                 delete[] encbuffer;
@@ -297,9 +330,16 @@ public:
 #endif
             node.addPair("filesize", (long)fs::file_size(currentFile));
 
-            sock.send(json.dump(node));
+            sock.sendmsg(json.dump(node));
 
             rfiles[node["to"].str][node["filename"].str] = new ifstream(currentFile, ios::binary);
+
+            lst->insertRow(lst->rowCount());
+            lst->setItem(lst->rowCount() - 1, 0, new QTableWidgetItem(QString::fromStdString(node["filename"].str)));
+            lst->setCellWidget(lst->rowCount() - 1, 1, new QProgressBar(this));
+            lst->setItem(lst->rowCount() - 1, 2, new QTableWidgetItem("Upload"));
+
+            table[node["to"].str][node["filename"].str] = lst->rowCount() - 1;
         });
 
         connect(this, &AppWindow::confirm, this, [this]() { currentConfirmation = confirmDialog->exec(); }, Qt::BlockingQueuedConnection);
