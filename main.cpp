@@ -17,7 +17,7 @@ Socket sock;
 
 int server_port = 9723;
 
-size_t buffer_size = 1024 * 1024;
+size_t buffer_size = 256 * 1024;
 
 uint64_t math_map(uint64_t x, uint64_t in_min, uint64_t in_max, uint64_t out_min, uint64_t out_max) {
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
