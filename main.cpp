@@ -1,10 +1,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <iostream>
-#include <thread>
 #include <filesystem>
 #include <map>
-#include <mutex>
 #include <utility>
+#include <chrono>
 #include <QtCore/QtCore>
 #include <QtWidgets/QtWidgets>
 #include "cpplibs/ssocket.hpp"
@@ -17,19 +16,33 @@ namespace fs = filesystem;
 string server_ip = "";
 int server_port = 9723;
 
-int buffer_size = 1024 * 1024;
+size_t buffer_size = 1024 * 1024;
 
 uint64_t math_map(uint64_t x, uint64_t in_min, uint64_t in_max, uint64_t out_min, uint64_t out_max) {
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
+
+int64_t timems() {
+    return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch()).count();
+}
+
+double round_up(double value, int decimal_places) {
+    const double multiplier = std::pow(10.0, decimal_places);
+    return std::ceil(value * multiplier) / multiplier;
+}
+
+struct FileDesc {
+    fstream* file;
+    size_t size;
+    QProgressBar* progress;
+    int lstrow;
+};
 
 class ConnectWindow : public QMainWindow {
 
 };
 
 class AppWindow : public QMainWindow {
-    Q_OBJECT
-
     QPushButton* selectFileBtn = nullptr;
     QPushButton* sendBtn = nullptr;
     QTableWidget* lst = nullptr;
@@ -43,25 +56,19 @@ class AppWindow : public QMainWindow {
     QLabel* confirmSize = nullptr;
     QLabel* confirmFrom = nullptr;
 
+    QTimer* socktimer = nullptr;
+
     Socket sock;
     Base64 base64;
     Json json;
 
-    map<string, map<string, ofstream*>> wfiles;
-    map<string, map<string, ifstream*>> rfiles;
+    map<string, map<string, FileDesc>> wfiles;
+    map<string, map<string, FileDesc>> rfiles;
 
-    map<string, map<string, int>> table;
+    fs::path currentFilePath;
 
-    fs::path currentFile;
-    string currentSaveName;
-    bool currentConfirmation;
+    int64_t tstart;
 
-    mutex fileMtx;
-    mutex sockMtx;
-
-    // void resizeEvent(QResizeEvent* event) {
-    //     btn1->resize(event->size());
-    // }
     void initTable() {
         lst = new QTableWidget(0, 4, this);
         lst->setGeometry(60, 110, 680, 270);
@@ -101,17 +108,11 @@ class AppWindow : public QMainWindow {
         confirmFrom = new QLabel(confirmDialog);
         confirmFrom->move(30, 90);
 
-        connect(confirmButtons, &QDialogButtonBox::accepted, confirmDialog, [this]() {
-            fileMtx.lock();
-            confirmDialog->accept();
-            currentSaveName = QFileDialog::getSaveFileName(this, tr("Save file"), QString::fromStdString(currentSaveName)).toStdString();
-            fileMtx.unlock();
-        });
-
+        connect(confirmButtons, &QDialogButtonBox::accepted, confirmDialog, &QDialog::accept);
         connect(confirmButtons, &QDialogButtonBox::rejected, confirmDialog, &QDialog::reject);
     }
 
-    void handler() {
+    void initSocket() {
         try {
             sock.open(AF_INET, SOCK_STREAM);
             sock.connect(server_ip, server_port);
@@ -127,12 +128,12 @@ class AppWindow : public QMainWindow {
         node = json.parse(sock.recvmsg().string);
         for (auto i : node["clients"].array) addrLst->insertItem(addrLst->count(), QString::fromStdString(i.str));
 
-        while (true) {
-            sockrecv_t data = sock.recvmsg();
-            // sockMtx.lock();
-            if (!data.size) break;
+        sock.setblocking(false);
+    }
 
-            // cout << data.string << " " << data.size << endl;
+    void handler() {
+            sockrecv_t data = sock.recvmsg();
+            if (!data.size) return;
 
             JsonNode node = json.parse(data.string);
 
@@ -147,8 +148,8 @@ class AppWindow : public QMainWindow {
                     for (auto [name, file] : rfiles[node["address"].str]) {
                         cout << "Delete rfile fd: " << node["address"].str << " " << name << endl;
 
-                        file->close();
-                        delete file;
+                        file.file->close();
+                        delete file.file;
                     }
 
                     rfiles.erase(node["address"].str);
@@ -158,15 +159,12 @@ class AppWindow : public QMainWindow {
                     for (auto [name, file] : wfiles[node["address"].str]) {
                         cout << "Delete wfile fd: " << node["address"].str << " " << name << endl;
 
-                        file->close();
-                        delete file;
+                        file.file->close();
+                        delete file.file;
                     }
 
                     wfiles.erase(node["address"].str);
                 }
-
-                
-                
             }
 
             else if (node["cmd"].str == "transfer_request") {
@@ -181,21 +179,30 @@ class AppWindow : public QMainWindow {
 
                 JsonNode node1;
 
-                currentSaveName = node["filename"].str;
-
-                emit confirm();
-                if (currentConfirmation) {
+                if (confirmDialog->exec()) {
                     node1.addPair("cmd", "accept_transfer_request");
                     node1.addPair("filename", node["filename"].str);
                     node1.addPair("to", node["from"].str);
 
-                    fileMtx.lock();
+                    string currentSaveName = QFileDialog::getSaveFileName(this, tr("Save file"), QString::fromStdString(node["filename"].str)).toStdString();
+
+                    lst->insertRow(lst->rowCount());
+                    lst->setItem(lst->rowCount() - 1, 0, new QTableWidgetItem(QString::fromStdString(node["filename"].str)));
+                    lst->setItem(lst->rowCount() - 1, 2, new QTableWidgetItem("Download"));
+                    lst->setItem(lst->rowCount() - 1, 3, new QTableWidgetItem("0.0"));
+                    lst->setCellWidget(lst->rowCount() - 1, 1, new QProgressBar(this));
+                    ((QProgressBar*)lst->cellWidget(lst->rowCount() - 1, 1))->setValue(0);
+
+                    lst->item(lst->rowCount() - 1, 2)->setTextAlignment(Qt::AlignCenter);
+                    lst->item(lst->rowCount() - 1, 3)->setTextAlignment(Qt::AlignCenter);
 #ifdef _WIN32
-                    wfiles[node["from"].str][node["filename"].str] = new ofstream(str2wstr(currentSaveName), ios::binary);
+                    wfiles[node["from"].str][node["filename"].str].file = new fstream(str2wstr(currentSaveName), ios::binary | ios::out);
 #else
-                    wfiles[node["from"].str][node["filename"].str] = new ofstream(currentSaveName, ios::binary);
+                    wfiles[node["from"].str][node["filename"].str].file = new fstream(currentSaveName, ios::binary | ios::out);
 #endif
-                    fileMtx.unlock();
+                    wfiles[node["from"].str][node["filename"].str].size = node["filesize"].integer;
+                    wfiles[node["from"].str][node["filename"].str].progress = (QProgressBar*)lst->cellWidget(lst->rowCount() - 1, 1);
+                    wfiles[node["from"].str][node["filename"].str].lstrow = lst->rowCount() - 1;
                 }
 
                 else {
@@ -208,19 +215,27 @@ class AppWindow : public QMainWindow {
             }
 
             else if (node["cmd"].str == "transfer_packet") {
+                FileDesc currentFile = wfiles[node["from"].str][node["filename"].str];
+                
+                lst->item(currentFile.lstrow, 3)->setText(QString::number(round_up(node["true_size"].integer / (double)(timems() - tstart) / 1000, 2)) + "Mb/s");
+                tstart = timems();
+
                 size_t size = node["true_size"].integer;
                 char* buffer = new char[size];
 
                 base64.decode(node["data"].str.c_str(), buffer, node["data"].str.size());
-
-                wfiles[node["from"].str][node["filename"].str]->write(buffer, size);
+                currentFile.file->write(buffer, size);
+                
+                if (currentFile.size) currentFile.progress->setValue(math_map((currentFile.file->tellg() > 0) ? (size_t)currentFile.file->tellg() : currentFile.size, 0, currentFile.size, 0, 100));
+                else currentFile.progress->setValue(100);
 
                 if (node["eof"].boolean) {
-                    wfiles[node["from"].str][node["filename"].str]->close();
+                    currentFile.file->close();
 
-                    delete wfiles[node["from"].str][node["filename"].str];
+                    delete currentFile.file;
                     wfiles.erase(node["from"].str);
 
+                    lst->item(currentFile.lstrow, 2)->setText("Downloaded");
                     cout << "Delete wfile fd: " << node["from"].str << " " << node["filename"].str << endl;
                 }
 
@@ -237,25 +252,33 @@ class AppWindow : public QMainWindow {
             }
 
             else if (node["cmd"].str == "packet_received" || node["cmd"].str == "transfer_accept") {
+                FileDesc currentFile = rfiles[node["from"].str][node["filename"].str];
+
                 char* buffer = new char[buffer_size];
                 char* encbuffer = new char[base64.calculateEncodedSize(buffer_size)];
 
-                rfiles[node["from"].str][node["filename"].str]->read(buffer, buffer_size);
-                int gcount = rfiles[node["from"].str][node["filename"].str]->gcount();
+                currentFile.file->read(buffer, buffer_size);
+                size_t gcount = currentFile.file->gcount();
+
+                lst->item(currentFile.lstrow, 3)->setText(QString::number(round_up(gcount / (double)(timems() - tstart) / 1000, 2)) + "Mb/s");
+                tstart = timems();
 
                 base64.encode(buffer, encbuffer, gcount);
 
-                bool eof = gcount < buffer_size;
+                bool eof = gcount < buffer_size || !gcount;
 
                 cout << "Sending packet: " << node["filename"].str << " to: " << node["from"].str << endl;
 
-                
+                if (currentFile.size) currentFile.progress->setValue(math_map((currentFile.file->tellg() > 0) ? (size_t)currentFile.file->tellg() : currentFile.size, 0, currentFile.size, 0, 100));
+                else currentFile.progress->setValue(100);
 
                 if (eof) {
-                    rfiles[node["from"].str][node["filename"].str]->close();
+                    currentFile.file->close();
 
-                    delete rfiles[node["from"].str][node["filename"].str];
+                    delete currentFile.file;
                     rfiles.erase(node["from"].str);
+
+                    lst->item(currentFile.lstrow, 2)->setText("Uploaded");
 
                     cout << "Delete rfile fd: " << node["from"].str << " " << node["filename"].str << endl;
                 }
@@ -265,7 +288,7 @@ class AppWindow : public QMainWindow {
                 node1.addPair("to", node["from"].str);
                 node1.addPair("filename", node["filename"].str);
                 node1.addPair("data", string(encbuffer, base64.calculateEncodedSize(gcount)));
-                node1.addPair("true_size", gcount);
+                node1.addPair("true_size", (long)gcount);
                 node1.addPair("eof", eof);
 
                 sock.sendmsg(json.dump(node1));
@@ -280,11 +303,11 @@ class AppWindow : public QMainWindow {
             }
         
             // sockMtx.unlock();
-        }
+        // }
     }
 public:
     AppWindow(QWidget* parent = nullptr) : QMainWindow(parent) {
-        this->resize(800, 450);
+        this->setFixedSize(800, 450);
 
         selectFileBtn = new QPushButton(this);
         selectFileBtn->setGeometry(60, 20, 100, 34);
@@ -301,57 +324,61 @@ public:
         addrLst->setGeometry(360, 20, 271, 34);
         addrLst->insertItem(0, "Select address...");
 
+        socktimer = new QTimer(this);
+
         initTable();
         initTransferDialog();
-
-        //confirmDialog->exec();
+        initSocket();
+        
+        connect(socktimer, &QTimer::timeout, this, &AppWindow::handler);
 
         connect(selectFileBtn, &QPushButton::clicked, [this]() {
 #ifdef _WIN32
-            currentFile = str2wstr(QFileDialog::getOpenFileName(this, tr("Open file")).toStdString());
-            selectedFile->setText(QString::fromStdString(wstr2str(currentFile.wstring())));
+            currentFilePath = str2wstr(QFileDialog::getOpenFileName(this, tr("Open file")).toStdString());
+            selectedFile->setText(QString::fromStdString(wstr2str(currentFilePath.wstring())));
 #else       
-            currentFile = QFileDialog::getOpenFileName(this, tr("Open file")).toStdString();
-            selectedFile->setText(QString::fromStdString(currentFile.string()));
+            currentFilePath = QFileDialog::getOpenFileName(this, tr("Open file")).toStdString();
+            selectedFile->setText(QString::fromStdString(currentFilePath.string()));
 #endif
             selectedFile->adjustSize();
         });
 
         connect(sendBtn, &QPushButton::clicked, [this]() {
-            if (!fs::exists(currentFile) || !addrLst->currentIndex()) return;
+            if (!fs::exists(currentFilePath) || !addrLst->currentIndex()) return;
 
             JsonNode node;
             node.addPair("cmd", "transfer_request");
             node.addPair("to", addrLst->currentText().toStdString());
 #ifdef _WIN32
-            node.addPair("filename", wstr2str(currentFile.filename().wstring()));
+            node.addPair("filename", wstr2str(currentFilePath.filename().wstring()));
 #else
-            node.addPair("filename", currentFile.filename().string());
+            node.addPair("filename", currentFilePath.filename().string());
 #endif
-            node.addPair("filesize", (long)fs::file_size(currentFile));
+            node.addPair("filesize", (long)fs::file_size(currentFilePath));
 
             sock.sendmsg(json.dump(node));
 
-            rfiles[node["to"].str][node["filename"].str] = new ifstream(currentFile, ios::binary);
-
+            rfiles[node["to"].str][node["filename"].str].file = new fstream(currentFilePath, ios::binary | ios::in);
+            rfiles[node["to"].str][node["filename"].str].size = fs::file_size(currentFilePath);
+            
             lst->insertRow(lst->rowCount());
             lst->setItem(lst->rowCount() - 1, 0, new QTableWidgetItem(QString::fromStdString(node["filename"].str)));
-            lst->setCellWidget(lst->rowCount() - 1, 1, new QProgressBar(this));
             lst->setItem(lst->rowCount() - 1, 2, new QTableWidgetItem("Upload"));
+            lst->setItem(lst->rowCount() - 1, 3, new QTableWidgetItem("0.0"));
+            lst->setCellWidget(lst->rowCount() - 1, 1, new QProgressBar(this));
+            ((QProgressBar*)lst->cellWidget(lst->rowCount() - 1, 1))->setValue(0);
 
-            table[node["to"].str][node["filename"].str] = lst->rowCount() - 1;
+            lst->item(lst->rowCount() - 1, 2)->setTextAlignment(Qt::AlignCenter);
+            lst->item(lst->rowCount() - 1, 3)->setTextAlignment(Qt::AlignCenter);
+
+            rfiles[node["to"].str][node["filename"].str].progress = (QProgressBar*)lst->cellWidget(lst->rowCount() - 1, 1);
+            rfiles[node["to"].str][node["filename"].str].lstrow = lst->rowCount() - 1;
         });
 
-        connect(this, &AppWindow::confirm, this, [this]() { currentConfirmation = confirmDialog->exec(); }, Qt::BlockingQueuedConnection);
+        socktimer->start(10);
 
-        std::thread(&AppWindow::handler, this).detach();
     }
-
-signals:
-    void confirm();
 };
-
-#include "main.moc"
 
 int main(int argc, char** argv) {
     /*setlocale*/
