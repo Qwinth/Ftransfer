@@ -283,6 +283,7 @@ class AppWindow : public QMainWindow {
             node1.addPair("eof", eof);
 
             sock.sendmsg(json.dump(node1));
+            cout << json.dump(node1).size() << endl;
 
             delete[] buffer;
             delete[] encbuffer;
@@ -372,6 +373,10 @@ class ConnectWindow : public QMainWindow {
     QLineEdit* addr = nullptr;
     QPushButton* connBtn = nullptr;
     QLabel* connErr = nullptr;
+
+    void keyPressEvent(QKeyEvent event) {
+        if (event.key() == Qt::Key_Enter) connBtn->click();
+    }
 public:
     ConnectWindow() {
         this->setFixedSize(490, 130);
@@ -388,6 +393,7 @@ public:
         connErr->move(30, 80);
         connErr->hide();
 
+        connect(addr, &QLineEdit::returnPressed, connBtn, &QPushButton::click);
         connect(connBtn, &QPushButton::clicked, [this]() {
             connErr->hide();
 
