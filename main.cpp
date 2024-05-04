@@ -13,7 +13,8 @@
 using namespace std;
 namespace fs = filesystem;
 
-string server_ip = "";
+Socket sock;
+
 int server_port = 9723;
 
 size_t buffer_size = 1024 * 1024;
@@ -38,10 +39,6 @@ struct FileDesc {
     int lstrow;
 };
 
-class ConnectWindow : public QMainWindow {
-
-};
-
 class AppWindow : public QMainWindow {
     QPushButton* selectFileBtn = nullptr;
     QPushButton* sendBtn = nullptr;
@@ -58,7 +55,6 @@ class AppWindow : public QMainWindow {
 
     QTimer* socktimer = nullptr;
 
-    Socket sock;
     Base64 base64;
     Json json;
 
@@ -112,15 +108,7 @@ class AppWindow : public QMainWindow {
         connect(confirmButtons, &QDialogButtonBox::rejected, confirmDialog, &QDialog::reject);
     }
 
-    void initSocket() {
-        try {
-            sock.open(AF_INET, SOCK_STREAM);
-            sock.connect(server_ip, server_port);
-        } catch (int e) {
-            cout << e << endl;
-            return;
-        }
-
+    void getClients() {
         JsonNode node;
         node.addPair("cmd", "cl_list");
         sock.sendmsg(json.dump(node));
@@ -236,6 +224,8 @@ class AppWindow : public QMainWindow {
                     wfiles.erase(node["from"].str);
 
                     lst->item(currentFile.lstrow, 2)->setText("Downloaded");
+                    lst->item(currentFile.lstrow, 2)->setForeground(Qt::green);
+
                     cout << "Delete wfile fd: " << node["from"].str << " " << node["filename"].str << endl;
                 }
 
@@ -279,6 +269,7 @@ class AppWindow : public QMainWindow {
                     rfiles.erase(node["from"].str);
 
                     lst->item(currentFile.lstrow, 2)->setText("Uploaded");
+                    lst->item(currentFile.lstrow, 2)->setForeground(Qt::green);
 
                     cout << "Delete rfile fd: " << node["from"].str << " " << node["filename"].str << endl;
                 }
@@ -301,9 +292,6 @@ class AppWindow : public QMainWindow {
                 
 
             }
-        
-            // sockMtx.unlock();
-        // }
     }
 public:
     AppWindow(QWidget* parent = nullptr) : QMainWindow(parent) {
@@ -328,7 +316,7 @@ public:
 
         initTable();
         initTransferDialog();
-        initSocket();
+        getClients();
         
         connect(socktimer, &QTimer::timeout, this, &AppWindow::handler);
 
@@ -380,6 +368,45 @@ public:
     }
 };
 
+class ConnectWindow : public QMainWindow {
+    QLineEdit* addr = nullptr;
+    QPushButton* connBtn = nullptr;
+    QLabel* connErr = nullptr;
+public:
+    ConnectWindow() {
+        this->setFixedSize(490, 130);
+
+        addr = new QLineEdit(this);
+        addr->setGeometry(30, 40, 330, 35);
+        addr->setPlaceholderText("Enter address");
+
+        connBtn = new QPushButton(this);
+        connBtn->setGeometry(370, 40, 90, 35);
+        connBtn->setText("Connect");
+
+        connErr = new QLabel(this);
+        connErr->move(30, 80);
+        connErr->hide();
+
+        connect(connBtn, &QPushButton::clicked, [this]() {
+            connErr->hide();
+
+            try {
+                sock.open(AF_INET, SOCK_STREAM);
+                sock.connect(addr->text().toStdString(), server_port);
+
+                this->close();
+
+                (new AppWindow)->show();
+            } catch (int e) {
+                connErr->setText("Connection error: " + QString::fromStdString(sstrerror(e)));
+                connErr->adjustSize();
+                connErr->show();
+            }
+        });
+    }
+};
+
 int main(int argc, char** argv) {
     /*setlocale*/
     //SetConsoleOutputCP(CP_UTF8);
@@ -392,8 +419,8 @@ int main(int argc, char** argv) {
 
     QApplication app(argc, argv);
 
-    AppWindow* window = new AppWindow;
-    window->show();
+    ConnectWindow* conWindow = new ConnectWindow;
+    conWindow->show();
 
     return app.exec();
 }
