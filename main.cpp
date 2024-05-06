@@ -4,12 +4,27 @@
 #include <map>
 #include <utility>
 #include <chrono>
-#include <QtCore/QtCore>
-#include <QtWidgets/QtWidgets>
 #include "cpplibs/ssocket.hpp"
 #include "cpplibs/strlib.hpp"
 #include "cpplibs/libjson.hpp"
 #include "cpplibs/libbase64.hpp"
+
+// #include <QtCore/QApplication>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QMainWindow>
+#include <QtWidgets/QLabel>
+#include <QtWidgets/QLineEdit>
+#include <QtWidgets/QPushButton>
+#include <QtWidgets/QProgressBar>
+#include <QtWidgets/QTableWidget>
+#include <QtWidgets/QComboBox>
+#include <QtWidgets/QDialogButtonBox>
+#include <QtWidgets/QDialog>
+#include <QtWidgets/QHeaderView>
+#include <QtWidgets/QFileDialog>
+// #include <QtGui/QKeyEvent>
+#include <QtCore/QTimer>
+
 using namespace std;
 namespace fs = filesystem;
 
@@ -113,6 +128,8 @@ class AppWindow : public QMainWindow {
         node.addPair("cmd", "cl_list");
         sock.sendmsg(json.dump(node));
 
+        cout << "here" << endl;
+
         node = json.parse(sock.recvmsg().string);
         for (auto i : node["clients"].array) addrLst->insertItem(addrLst->count(), QString::fromStdString(i.str));
 
@@ -177,7 +194,7 @@ class AppWindow : public QMainWindow {
                 lst->insertRow(lst->rowCount());
                 lst->setItem(lst->rowCount() - 1, 0, new QTableWidgetItem(QString::fromStdString(node["filename"].str)));
                 lst->setItem(lst->rowCount() - 1, 2, new QTableWidgetItem("Download"));
-                lst->setItem(lst->rowCount() - 1, 3, new QTableWidgetItem("0.0"));
+                lst->setItem(lst->rowCount() - 1, 3, new QTableWidgetItem("0Mb/s"));
                 lst->setCellWidget(lst->rowCount() - 1, 1, new QProgressBar(this));
                 ((QProgressBar*)lst->cellWidget(lst->rowCount() - 1, 1))->setValue(0);
 
@@ -221,7 +238,7 @@ class AppWindow : public QMainWindow {
                 currentFile.file->close();
 
                 delete currentFile.file;
-                wfiles.erase(node["from"].str);
+                wfiles[node["from"].str].erase(node["filename"].str);
 
                 lst->item(currentFile.lstrow, 2)->setText("Downloaded");
                 lst->item(currentFile.lstrow, 2)->setForeground(Qt::green);
@@ -266,7 +283,7 @@ class AppWindow : public QMainWindow {
                 currentFile.file->close();
 
                 delete currentFile.file;
-                rfiles.erase(node["from"].str);
+                rfiles[node["from"].str].erase(node["filename"].str);
 
                 lst->item(currentFile.lstrow, 2)->setText("Uploaded");
                 lst->item(currentFile.lstrow, 2)->setForeground(Qt::green);
@@ -353,7 +370,7 @@ public:
             lst->insertRow(lst->rowCount());
             lst->setItem(lst->rowCount() - 1, 0, new QTableWidgetItem(QString::fromStdString(node["filename"].str)));
             lst->setItem(lst->rowCount() - 1, 2, new QTableWidgetItem("Upload"));
-            lst->setItem(lst->rowCount() - 1, 3, new QTableWidgetItem("0.0"));
+            lst->setItem(lst->rowCount() - 1, 3, new QTableWidgetItem("0Mb/s"));
             lst->setCellWidget(lst->rowCount() - 1, 1, new QProgressBar(this));
             ((QProgressBar*)lst->cellWidget(lst->rowCount() - 1, 1))->setValue(0);
 
@@ -374,9 +391,9 @@ class ConnectWindow : public QMainWindow {
     QPushButton* connBtn = nullptr;
     QLabel* connErr = nullptr;
 
-    void keyPressEvent(QKeyEvent event) {
-        if (event.key() == Qt::Key_Enter) connBtn->click();
-    }
+    // void keyPressEvent(QKeyEvent event) {
+    //     if (event.key() == Qt::Key_Enter) connBtn->click();
+    // }
 public:
     ConnectWindow() {
         this->setFixedSize(490, 130);
@@ -399,6 +416,7 @@ public:
 
             try {
                 sock.open(AF_INET, SOCK_STREAM);
+                // sock.settcpnodelay(1);
                 sock.connect(addr->text().toStdString(), server_port);
 
                 this->close();
@@ -418,8 +436,8 @@ int main(int argc, char** argv) {
     /*setlocale*/
     //SetConsoleOutputCP(CP_UTF8);
 
-    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
-    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     // QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 
     //QTextCodec::setCodecForLocale(QTextCodec::codecForName("UTF-8"));

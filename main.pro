@@ -1,3 +1,3 @@
 SOURCES += main.cpp
-QT += core widgets gui
+QT += widgets
 TARGET = Ftransfer
