@@ -248,8 +248,7 @@ class AppWindow : public QMainWindow {
                     delete currentFile.file;
                     wfiles[node["from"].str].erase(node["filename"].str);
 
-                    lst->item(currentFile.lstrow, 2)->setText("Downloaded");
-                    lst->item(currentFile.lstrow, 2)->setForeground(Qt::darkGreen);
+                    emit downloadCompleted();
 
                     cout << "Delete wfile fd: " << node["from"].str << " " << node["filename"].str << endl;
                 }
@@ -293,8 +292,7 @@ class AppWindow : public QMainWindow {
                     delete currentFile.file;
                     rfiles[node["from"].str].erase(node["filename"].str);
 
-                    lst->item(currentFile.lstrow, 2)->setText("Uploaded");
-                    lst->item(currentFile.lstrow, 2)->setForeground(Qt::darkGreen);
+                    emit uploadCompleted();
 
                     cout << "Delete rfile fd: " << node["from"].str << " " << node["filename"].str << endl;
                 }
@@ -391,6 +389,8 @@ public:
         connect(this, &AppWindow::confirm, this, [this]() { currentConfirmation = confirmDialog->exec(); }, Qt::BlockingQueuedConnection);
         connect(this, &AppWindow::setProgress, this, [this](int e) { currentFile.progress->setValue(e); }, Qt::BlockingQueuedConnection);
         connect(this, &AppWindow::setSpeed, this, [this](double e) { lst->item(currentFile.lstrow, 3)->setText(QString::number(round_up(e / (double)(timems() - tstart) / 1000, 2)) + "Mb/s"); }, Qt::BlockingQueuedConnection);
+        connect(this, &AppWindow::downloadCompleted, this, [this]() { lst->item(currentFile.lstrow, 2)->setText("Downloaded"); lst->item(currentFile.lstrow, 2)->setForeground(Qt::darkGreen); }, Qt::BlockingQueuedConnection);
+        connect(this, &AppWindow::uploadCompleted, this, [this]() { lst->item(currentFile.lstrow, 2)->setText("Uploaded"); lst->item(currentFile.lstrow, 2)->setForeground(Qt::darkGreen); }, Qt::BlockingQueuedConnection);
 
         std::thread(&AppWindow::handler, this).detach();
     }
@@ -399,6 +399,8 @@ signals:
     void confirm();
     void setProgress(int);
     void setSpeed(double);
+    void downloadCompleted();
+    void uploadCompleted();
 };
 
 class ConnectWindow : public QMainWindow {
