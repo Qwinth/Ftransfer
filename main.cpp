@@ -230,7 +230,7 @@ class AppWindow : public QMainWindow {
             else if (node["cmd"].str == "transfer_packet") {
                 currentFile = wfiles[node["from"].str][node["filename"].str];
 
-                lst->item(currentFile.lstrow, 3)->setText(QString::number(round_up(node["true_size"].integer / (double)(timems() - tstart) / 1000, 2)) + "Mb/s");
+                emit setSpeed(node["true_size"].integer);
                 tstart = timems();
 
                 size_t size = node["true_size"].integer;
@@ -275,7 +275,7 @@ class AppWindow : public QMainWindow {
                 currentFile.file->read(buffer, buffer_size);
                 size_t gcount = currentFile.file->gcount();
 
-                lst->item(currentFile.lstrow, 3)->setText(QString::number(round_up(gcount / (double)(timems() - tstart) / 1000, 2)) + "Mb/s");
+                emit setSpeed(gcount);
                 tstart = timems();
 
                 base64.encode(buffer, encbuffer, gcount);
@@ -390,6 +390,7 @@ public:
 
         connect(this, &AppWindow::confirm, this, [this]() { currentConfirmation = confirmDialog->exec(); }, Qt::BlockingQueuedConnection);
         connect(this, &AppWindow::setProgress, this, [this](int e) { currentFile.progress->setValue(e); }, Qt::BlockingQueuedConnection);
+        connect(this, &AppWindow::setSpeed, this, [this](double e) { lst->item(currentFile.lstrow, 3)->setText(QString::number(round_up(e / (double)(timems() - tstart) / 1000, 2)) + "Mb/s"); }, Qt::BlockingQueuedConnection);
 
         std::thread(&AppWindow::handler, this).detach();
     }
@@ -397,6 +398,7 @@ public:
 signals:
     void confirm();
     void setProgress(int);
+    void setSpeed(double);
 };
 
 class ConnectWindow : public QMainWindow {
